@@ -1,0 +1,88 @@
+<style>
+  :root {
+    --primary-color: #4285f4; --background-color: #f8f9fa; --card-background: #ffffff;
+    --text-color: #3c4043; --subtitle-color: #5f6368; --border-color: #dadce0;
+  }
+  html, body {
+    margin: 0; padding: 0; font-family: 'Noto Sans JP', sans-serif;
+    background-color: var(--background-color); color: var(--text-color);
+  }
+  .container {
+    padding: 32px; box-sizing: border-box; height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  .header { flex-shrink: 0; }
+  .header h1 { font-size: 24px; font-weight: 700; margin: 0 0 8px 0; color: var(--primary-color); }
+  .header p { font-size: 16px; margin: 0 0 24px 0; color: var(--subtitle-color); }
+  .screen { display: none; flex-grow: 1; flex-direction: column; }
+  .screen.active { display: flex; }
+  .card-grid { 
+    display: flex; 
+    flex-direction: column;
+    gap: 24px; 
+    align-items: center;
+  }
+  .card {
+    flex: 1; 
+    background-color: var(--card-background); border: 1px solid var(--border-color);
+    border-radius: 12px; padding: 24px; cursor: pointer; transition: all 0.2s ease-in-out; text-align: center;
+    width: 100%;
+    max-width: 400px;
+    box-sizing: border-box;
+  }
+  .card:hover { transform: translateY(-4px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-color: var(--primary-color); }
+  .card .icon { font-size: 48px; color: var(--primary-color); margin-bottom: 16px; }
+  .card h2 { font-size: 18px; font-weight: 500; margin: 0; }
+  .location-list {
+    min-height: 200px; flex-grow: 1; overflow-y: auto; border: 1px solid var(--border-color);
+    border-radius: 8px; background-color: var(--card-background);
+  }
+  .location-item { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-color); cursor: pointer; }
+  .location-item:last-child { border-bottom: none; }
+  .location-item:hover { background-color: #f1f3f4; }
+  .location-item input[type="checkbox"] { margin-right: 12px; }
+  .location-item label { cursor: pointer; flex-grow: 1; }
+  .editor-grid { display: flex; gap: 24px; flex-grow: 1; min-height: 0; }
+  .editor-main { flex: 1.5; display: flex; flex-direction: column; }
+  .editor-side { flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+  .editor-main textarea {
+    width: 100%; flex-grow: 1; resize: none; border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 12px; font-family: 'Noto Sans JP', sans-serif; font-size: 14px; box-sizing: border-box;
+  }
+  .option-group {
+    border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;
+    background-color: var(--card-background); font-size: 14px;
+  }
+  .option-group h3 { font-size: 14px; font-weight: 700; margin: 0 0 8px 0; padding-bottom: 4px; border-bottom: 1px solid var(--border-color); }
+  .option-group > div { 
+    display: flex; align-items: flex-start; margin-bottom: 8px; 
+  }
+  .mention-list-group > div {
+    display: flex; align-items: flex-start; margin-bottom: 8px;
+  }
+  .option-group input[type="radio"], .option-group input[type="checkbox"] { margin-right: 8px; margin-top: 2px; }
+  .option-group label { white-space: normal; word-break: break-word; }
+  .final-preview {
+    flex-grow: 1; background-color: var(--card-background); border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 16px; white-space: pre-wrap; overflow-y: auto; font-size: 14px; line-height: 1.6;
+  }
+  .mention-mode { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border-color); }
+  .mention-list {
+    max-height: 180px;
+    overflow-y: auto;
+    padding-left: 5px; 
+  }
+  .mention-list-group { margin-bottom: 8px; }
+  .mention-list-group-title { font-weight: bold; font-size: 12px; color: var(--subtitle-color); margin-bottom: 4px; }
+  
+  .button-container { margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px; flex-shrink: 0; }
+  .button {
+    padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px;
+    font-weight: 500; cursor: pointer; transition: background-color 0.2s;
+  }
+  .button-primary { background-color: var(--primary-color); color: white; }
+  .button-primary:hover { background-color: #3367d6; }
+  .button-secondary { background-color: #f1f3f4; color: var(--subtitle-color); border: 1px solid var(--border-color); }
+  .button-secondary:hover { background-color: #e8eaed; }
+  .loader { text-align: center; padding: 40px; font-size: 16px; color: var(--subtitle-color); }
+</style>

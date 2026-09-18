@@ -1,0 +1,307 @@
+<script>
+  let selectedAlertType = '',
+    unfulfilledData = [],
+    selectedLocationData = [],
+    finalMessageContent = '';
+  let editorData = {};
+
+  function showScreen(screenId) {
+    document.querySelectorAll('.screen').forEach(screen => screen.classList.remove('active'));
+    document.getElementById(screenId).classList.add('active');
+  }
+
+  function goBack(screenId) {
+    // 投稿ボタンの表示・機能を元に戻す
+    const postButton = document.getElementById('post-button');
+    postButton.style.display = 'inline-block';
+    postButton.onclick = initiatePosting;
+    postButton.textContent = '投稿する';
+    postButton.disabled = false;
+
+    showScreen(screenId);
+  }
+
+  function selectAlertType(type) {
+    selectedAlertType = type;
+    loadLocationSelectionScreen();
+  }
+
+  function runDailyAlert() {
+    document.getElementById('screen-1').innerHTML = `<div class="loader">Dailyアラートのプレビューを生成中です...</div>`;
+    google.script.run
+      .withSuccessHandler(displayAlertPreview)
+      .withFailureHandler(showError)
+      .generateDailyAlertPreview();
+  }
+
+  function displayAlertPreview(previewContent) {
+    if (previewContent && previewContent.error) {
+      showError(previewContent.error);
+      return;
+    }
+    const finalMessage = '[toall]\n' + previewContent;
+    finalMessageContent = finalMessage;
+    document.getElementById('final-preview').textContent = finalMessage;
+
+    // ★★ 投稿ボタンを表示し、Dailyアラート投稿用の関数を割り当てる ★★
+    const postButton = document.getElementById('post-button');
+    postButton.style.display = 'inline-block';
+    postButton.textContent = '投稿する';
+    postButton.disabled = false;
+    postButton.onclick = postDailyAlert; // 新しい関数を割り当て
+
+    showScreen('screen-4');
+  }
+
+  /**
+   * Dailyアラートを実際に投稿する関数 (★★新規追加★★)
+   */
+  function postDailyAlert() {
+    const postButton = document.getElementById('post-button');
+    postButton.disabled = true;
+    postButton.textContent = '投稿中...';
+
+    // サーバー側のDailyアラート投稿関数を呼び出す
+    google.script.run
+      .withSuccessHandler(onPostSuccess)
+      .withFailureHandler(showError)
+      .triggerDailyAlertFromUI();
+  }
+
+
+  function loadLocationSelectionScreen() {
+    showScreen('screen-2');
+    document.getElementById('location-list-container').innerHTML = `<div class="loader">未充足リストを読み込んでいます...</div>`;
+    google.script.run.withSuccessHandler(displayLocations).withFailureHandler(showError).getUnfulfilledLocationsForUI_v2();
+  }
+
+  function displayLocations(locations) {
+    if (locations.error) {
+      showError(locations.error);
+      return;
+    }
+    unfulfilledData = locations;
+    const container = document.getElementById('location-list-container');
+    if (!locations || locations.length === 0) {
+      container.innerHTML = `<div class="loader">未充足の拠点はありません。</div>`;
+      document.querySelector('#screen-2 .button-primary').disabled = true;
+      return;
+    }
+    document.querySelector('#screen-2 .button-primary').disabled = false;
+    let html = '';
+    locations.forEach((loc, index) => {
+      html += `<div class="location-item" onclick="toggleCheckbox('loc-${index}')"><input type="checkbox" id="loc-${index}" value="${loc.id}"><label for="loc-${index}">${loc.date} ${loc.name}（${loc.unfulfilledTime}）</label></div>`;
+    });
+    container.innerHTML = html;
+  }
+
+  function toggleCheckbox(checkboxId) {
+    const checkbox = document.getElementById(checkboxId);
+    if (checkbox) checkbox.checked = !checkbox.checked;
+  }
+
+  function selectLocation() {
+    const selectedCheckboxes = document.querySelectorAll('#location-list-container input[type="checkbox"]:checked');
+    if (selectedCheckboxes.length === 0) {
+      alert('拠点を1つ以上選択してください。');
+      return;
+    }
+    if (selectedAlertType === 'transfer' && selectedCheckboxes.length > 1) {
+      alert('振替依頼アラートは、一度に1つの拠点しか選択できません。');
+      return;
+    }
+    const selectedIds = Array.from(selectedCheckboxes).map(cb => cb.value);
+    selectedLocationData = unfulfilledData.filter(d => selectedIds.includes(d.id));
+    loadEditorScreen();
+  }
+
+  function loadEditorScreen() {
+    showScreen('screen-3');
+    document.getElementById('message-template').value = 'テンプレートと各種データを読み込んでいます...';
+    google.script.run.withSuccessHandler(populateEditor).withFailureHandler(showError).getEditorData_v2(selectedAlertType);
+  }
+
+  function populateEditor(data) {
+    if (data.error) {
+      showError(data.error);
+      return;
+    }
+    editorData = data;
+    const isUnfulfilled = (selectedAlertType === 'unfulfilled');
+    document.getElementById('mention-options-container').style.display = 'block';
+    document.getElementById('approach-options-container').style.display = isUnfulfilled ? 'block' : 'none';
+    document.getElementById('risk-options-container').style.display = isUnfulfilled ? 'block' : 'none';
+    document.getElementById('reason-options-container').style.display = isUnfulfilled ? 'none' : 'block';
+    populateMentionOptions(editorData.mentions);
+    populateOptions('reason-options-container', 'reason', editorData.template.reasons);
+    populateOptions('approach-options-container', 'approach', editorData.template.approachOptions);
+    populateOptions('risk-options-container', 'risk', editorData.template.riskOptions);
+    const allInputs = document.querySelectorAll('input[name="mention-mode"], input[name="mention-user"], input[name="approach"], input[name="risk"], input[name="reason"]');
+    allInputs.forEach(input => {
+      input.removeEventListener('change', updateMessageText);
+      input.addEventListener('change', updateMessageText);
+    });
+    updateMessageText();
+  }
+
+  function populateMentionOptions(mentions) {
+    const container = document.getElementById('mention-options-container');
+    const header = container.querySelector('h3');
+    container.innerHTML = '';
+    if (header) container.appendChild(header);
+    const extractName = (tag) => {
+      const match = tag.match(/\[To:\d+\](.*)/);
+      return match ? match[1] : tag;
+    };
+    container.innerHTML += `
+      <div class="mention-mode">
+        <div><input type="radio" name="mention-mode" id="mention-mode-individual" value="individual" checked><label for="mention-mode-individual">個別選択</label></div>
+        <div><input type="radio" name="mention-mode" id="mention-mode-toall" value="toall"><label for="mention-mode-toall">全員に通知 ([toall])</label></div>
+      </div>
+      <div id="mention-checkbox-list" class="mention-list">
+        <div class="mention-list-group"><div class="mention-list-group-title">DS部</div>${mentions.ds.map((m, i) => `<div><input type="checkbox" name="mention-user" id="mention-ds-${i}" value="${m}" checked><label for="mention-ds-${i}">${extractName(m)}</label></div>`).join('')}</div>
+        <div class="mention-list-group"><div class="mention-list-group-title">CCS部</div>${mentions.ccs.map((m, i) => `<div><input type="checkbox" name="mention-user" id="mention-ccs-${i}" value="${m}" checked><label for="mention-ccs-${i}">${extractName(m)}</label></div>`).join('')}</div>
+        <div class="mention-list-group"><div class="mention-list-group-title">拠点長他</div>${mentions.others.map((m, i) => `<div><input type="checkbox" name="mention-user" id="mention-others-${i}" value="${m}"><label for="mention-others-${i}">${extractName(m)}</label></div>`).join('')}</div>
+      </div>
+    `;
+    document.querySelectorAll('input[name="mention-mode"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        document.getElementById('mention-checkbox-list').style.display = (e.target.value === 'individual') ? 'block' : 'none';
+      });
+    });
+  }
+
+  function populateOptions(containerId, groupName, optionsStr) {
+    const container = document.getElementById(containerId);
+    const header = container.querySelector('h3');
+    container.innerHTML = '';
+    if (header) container.appendChild(header);
+    if (!optionsStr || optionsStr.trim() === '') {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = 'block';
+    const inputType = (groupName === 'approach') ? 'checkbox' : 'radio';
+    optionsStr.split('\n\n').forEach((opt, index) => {
+      if (opt.trim() === '') return;
+      const div = document.createElement('div');
+      div.innerHTML = `<input type="${inputType}" name="${groupName}" id="${groupName}-${index}" value="${opt.trim()}"><label for="${groupName}-${index}">${opt.trim()}</label>`;
+      container.appendChild(div);
+    });
+  }
+
+  function updateMessageText() {
+    const mentionMode = document.querySelector('input[name="mention-mode"]:checked').value;
+    const mentionText = (mentionMode === 'toall') ? '[toall]' : Array.from(document.querySelectorAll('input[name="mention-user"]:checked')).map(cb => cb.value).join('');
+    const baseMessage = (selectedAlertType === 'unfulfilled') ? buildUnfulfilledMessageBody() : buildTransferMessageBody();
+    const finalMessage = mentionText ? (mentionText + '\n' + baseMessage) : baseMessage;
+    document.getElementById('message-template').value = finalMessage;
+  }
+
+  function buildUnfulfilledMessageBody() {
+    let message = editorData.template.template1;
+    let locationBlocks = "";
+    const locationTemplate = `対象拠点：【】（対象日 △△）\nワクチン予約数：◯件（投稿時現在）\n充足率：◯％（予約数/母数）\n`;
+    selectedLocationData.forEach(loc => {
+      let block = locationTemplate.replace('【】', loc.name).replace('対象日', loc.date).replace('△△', loc.unfulfilledTime).replace('◯件', `${loc.reservations}件`).replace('◯％', `${loc.rate}％`).replace('予約数/母数', `${loc.reservations}/${loc.total}`);
+      locationBlocks += block + "\n"
+    });
+    message = message.replace("直近で未充足になる危険がある拠点をお伝えいたします。", "直近で未充足になる危険がある拠点をお伝えいたします。\n");
+    message = message.replace(/対象日までの日数(.|\n)*\[hr\]/, locationBlocks + "[hr]");
+    const approachText = Array.from(document.querySelectorAll('input[name="approach"]:checked')).map(cb => cb.value).join("\n");
+    const risk = document.querySelector('input[name="risk"]:checked')?.value || "";
+    let statusText = "\n\n";
+    if (approachText) statusText += approachText + "\n\n";
+    if (risk) statusText += '【危険度】\n' + risk + "\n";
+    return message.replace(/DS部の対策状況([\s\S]*?)医師充足、キャンセルの場合/g, `DS部の対策状況${statusText}\n医師充足、キャンセルの場合`);
+  }
+
+  function buildTransferMessageBody() {
+    let message = editorData.template.template1;
+    const location = selectedLocationData[0];
+    const reason = document.querySelector('input[name="reason"]:checked')?.value || '（未選択）';
+    message = message.replace('対象拠点：【】', `対象拠点：${location.name}`);
+    message = message.replace('時間00:00-00:00', `時間：${location.unfulfilledTime}`);
+    message = message.replace('ワクチン予約数：◯件（投稿時現在）', `ワクチン予約数：${location.reservations}件（投稿時現在）`);
+    message = message.replace(/充足率：\s*充足率：◯％（実数\/母数）/, `充足率：${location.rate}％（${location.reservations}/${location.total}）`);
+    message = message.replace('医師不在時間：00:00-00:00', `医師不在時間：${location.unfulfilledTime}`);
+    const alertCountLine = `発動：本年度${editorData.fiscalYearAlertCount}号`;
+    const reasonLine = `原因：${reason}`;
+    message = message.replace(/発動：本件◯件/, `${alertCountLine}\n${reasonLine}`);
+    message = message.replace(/原因：→ここに\s*\n?/, "");
+    return message;
+  }
+
+  function confirmContent() {
+    finalMessageContent = document.getElementById('message-template').value;
+    document.getElementById('final-preview').textContent = finalMessageContent;
+    showScreen('screen-4');
+  }
+
+  function initiatePosting() {
+    const postButton = document.getElementById('post-button');
+    postButton.disabled = true;
+    postButton.textContent = '投稿中...';
+    google.script.run.withSuccessHandler(showConfirmationPopup).withFailureHandler(showError).getRoomInfo_v2('【緊急】予約振替対策チーム[DS×CL×CS]');
+  }
+
+  function showConfirmationPopup(roomInfo) {
+    if (roomInfo.error) {
+      showError(roomInfo.error);
+      return;
+    }
+    if (confirm(`「${roomInfo.name}」に投稿しますか？`)) {
+      postMessage(roomInfo.id);
+    } else {
+      const postButton = document.getElementById('post-button');
+      postButton.disabled = false;
+      postButton.textContent = '投稿する';
+    }
+  }
+
+  function postMessage(roomId) {
+    const reason = document.querySelector('input[name="reason"]:checked')?.value || '';
+    const historyData = {
+      alertType: selectedAlertType,
+      locations: selectedLocationData,
+      reason: reason,
+      fiscalYearAlertCount: editorData.fiscalYearAlertCount
+    };
+    google.script.run.withSuccessHandler(onPostSuccess).withFailureHandler(showError).postAlertToChatwork_v2(roomId, finalMessageContent, historyData);
+  }
+
+  function onPostSuccess(response) {
+    if (response.success) {
+      alert(response.message);
+      google.script.host.close();
+    } else {
+      showError(response.message);
+    }
+  }
+
+  function showError(errorMessage) {
+    alert('エラーが発生しました: ' + errorMessage);
+    
+    // どんな状況でも最初の画面に戻せるように、UIのHTMLを再構築する
+    showScreen('screen-1'); 
+    document.getElementById('screen-1').innerHTML = `
+      <div class="header">
+        <h1>ワクチンくん起動</h1>
+        <p>実行する操作を選択してください。</p>
+      </div>
+      <div class="card-grid">
+        <div class="card" onclick="selectAlertType('unfulfilled');">
+          <span class="icon material-symbols-outlined">crisis_alert</span>
+          <h2>未充足危険アラート</h2>
+        </div>
+        <div class="card" onclick="selectAlertType('transfer');">
+          <span class="icon material-symbols-outlined">swap_horiz</span>
+          <h2>振替依頼アラート</h2>
+        </div>
+        <div class="card" onclick="runDailyAlert();">
+          <span class="icon material-symbols-outlined">today</span>
+          <h2>Dailyアラート手動実行</h2>
+        </div>
+      </div>`;
+  }
+</script>
