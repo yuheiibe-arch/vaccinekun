@@ -1,5 +1,5 @@
 /**
- * Dailyアラートを生成し、Chatworkへ自動投稿する関数
+ * Dailyアラートを生成し、ChatworkとSlackへ自動投稿する関数
  * この関数を時間主導型トリガー（例: 毎日午後5時〜6時）に設定してください。
  */
 function triggerDailyAlertFromUI() {
@@ -50,9 +50,10 @@ function triggerDailyAlertFromUI() {
     if (!alertTemplate || !noAlertTemplate) throw new Error('「テンプレ」シートのA列に項目名 "Daily Alert" が見つかりません。');
 
     let messageBody = '';
+    let locationListStr = ''; // Slack用
     const today = new Date();
     const postTimeStr = Utilities.formatDate(today, 'JST', 'HH:mm');
-    const postDateStr = `${today.getMonth() + 1}月${today.getDate()}日（${getJapaneseDay(today)}）医師不在報告　${postTimeStr}`;
+    const postDateStr = `${today.getMonth() + 1}月${today.getDate()}日（${getJapaneseDay(today)}）医師不在報告 ${postTimeStr}`;
 
     const startPeriod = Utilities.formatDate(tomorrow, 'JST', 'MM/dd') + `（${getJapaneseDay(tomorrow)}）`;
     const endPeriod = Utilities.formatDate(fiveDaysLater, 'JST', 'MM/dd') + `（${getJapaneseDay(fiveDaysLater)}）`;
@@ -60,7 +61,7 @@ function triggerDailyAlertFromUI() {
 
     if (targetRows.length > 0) {
       messageBody = alertTemplate;
-      const locationListStr = targetRows.map(row => {
+      locationListStr = targetRows.map(row => {
         const targetDate = new Date(row[headerIndices['対象日']]);
         const dateHeader = Utilities.formatDate(targetDate, 'JST', 'MM/dd') + `（${getJapaneseDay(targetDate)}）`;
 
@@ -80,7 +81,10 @@ function triggerDailyAlertFromUI() {
       
       messageBody = messageBody.replace(/◯月◯日\s*（.）医師不在報告/, postDateStr);
       messageBody = messageBody.replace(/〇〇\/〇〇～〇〇\/〇〇/, periodStr);
-      messageBody = messageBody.replace(/(\[hr\])[\s\S]*(\[\/info\])/, `$1\n${locationListStr}\n$2`);
+      
+      // 不在がある場合、Chatworkには詳細リンクを追記する
+      const detailLinkText = '5日以降の不在状況詳細はこちらをご確認ください。\nhttps://docs.google.com/spreadsheets/d/1BobYzsY2ApVTCP07qkJFOc6ZQkxq1bJgXl2endV5vHg/edit?gid=59569568#gid=59569568';
+      messageBody = messageBody.replace(/(\[hr\])[\s\S]*(\[\/info\])/, `$1\n${locationListStr}\n\n${detailLinkText}\n$2`);
 
     } else {
       messageBody = noAlertTemplate;
@@ -88,13 +92,16 @@ function triggerDailyAlertFromUI() {
       messageBody = messageBody.replace(/〇〇\/〇〇～〇〇\/〇〇/, periodStr);
     }
 
+    // --- 1. Chatworkへの投稿 ---
     const finalMessage = '[toall]\n' + messageBody;
     const roomInfo = getRoomInfo_v2('【緊急】予約振替対策チーム[DS×CL×CS]');
     if (roomInfo.error) throw new Error(roomInfo.error);
     
     postAlertToChatwork_v2(roomInfo.id, finalMessage, {}); 
 
-    // トリガー実行の場合、この戻り値はログに記録されるだけです
+    // --- 2. Slackへの投稿 ---
+    postAlertToSlack(targetRows.length, postDateStr, periodStr, locationListStr);
+
     return { success: true, message: 'Dailyアラートの投稿が完了しました。' };
 
   } catch(e) {
@@ -104,8 +111,89 @@ function triggerDailyAlertFromUI() {
 }
 
 /**
- * 日本語の曜日を取得するヘルパー関数
+ * ==========================================
+ * Slack通知用関数 (Block Kit対応・画像フォーマット再現版)
+ * ==========================================
  */
-function getJapaneseDay(date) {
-  return ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
+function postAlertToSlack(targetCount, postDateStr, periodStr, locationListStr) {
+  const SLACK_WEBHOOK_URL = PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_URL');
+  if (!SLACK_WEBHOOK_URL) {
+    Logger.log("❌ Slack Webhook URL が設定されていません。");
+    return;
+  }
+
+  const sheetUrl = 'https://docs.google.com/spreadsheets/d/1BobYzsY2ApVTCP07qkJFOc6ZQkxq1bJgXl2endV5vHg/edit?gid=59569568#gid=59569568';
+  
+  let previewText = targetCount > 0 
+    ? `@dspart @dsshift 🚨 ワクチン医師不在報告: ${targetCount}件の不在があります` 
+    : `✅ ワクチン医師不在報告: 医師の不在はありません`;
+
+  // 共通のヘッダー部分 (時間部分を除外)
+  const dateOnlyStr = postDateStr.split(' ')[0];
+
+  const blocks = [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": `@dspart @dsshift\n*${dateOnlyStr}*\n\n${periodStr}`
+      }
+    },
+    {
+      "type": "divider"
+    }
+  ];
+
+  if (targetCount > 0) {
+    blocks.push({
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": locationListStr
+      }
+    });
+    blocks.push({
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "📊 不在状況詳細を開く",
+            "emoji": true
+          },
+          "url": sheetUrl,
+          "style": "primary"
+        }
+      ]
+    });
+  } else {
+    // 不在0件時は、赤文字インラインコードで「直近の医師不在はありません。」
+    blocks.push({
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "`直近の医師不在はありません。`"
+      }
+    });
+  }
+
+  const payload = {
+    "channel": "C0C3KKZ92NL",
+    "text": previewText,
+    "blocks": blocks
+  };
+
+  const options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload)
+  };
+
+  try {
+    UrlFetchApp.fetch(SLACK_WEBHOOK_URL, options);
+    Logger.log("✅ Slack通知の送信に成功しました。");
+  } catch (e) {
+    Logger.log("❌ Slack送信エラー: " + e.message);
+  }
 }
