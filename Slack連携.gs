@@ -15,8 +15,8 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
   
   // スマホ通知などに表示されるプレビューテキスト
   let previewText = targetCount > 0 
-    ? `@dspart @dsshift 🚨 ワクチンくん: ${periodStr} の期間に ${targetCount}件 の医師不在があります` 
-    : `✅ ワクチンくん: ${periodStr} の期間に医師の不在はありません`;
+    ? `<!channel> 🚨 ワクチンくん: ${periodStr} の期間に ${targetCount}件 の医師不在があります` 
+    : `<!channel> ✅ ワクチンくん: 対象期間に医師不在はありません。`;
 
   let blocks = [];
 
@@ -35,7 +35,7 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
         "type": "section",
         "text": {
           "type": "mrkdwn",
-          "text": `@dspart @dsshift\nDaily checkが完了しました。\n対象期間（${periodStr}）において、*${targetCount}件* の医師不在拠点があります。`
+          "text": `<!channel>\nDaily checkが完了しました。\n対象期間（${periodStr}）において、*${targetCount}件* の医師不在拠点があります。`
         }
       },
       {
@@ -86,7 +86,7 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
         "type": "section",
         "text": {
           "type": "mrkdwn",
-          "text": `@dspart @dsshift\n対象期間（${periodStr}）\n\n\`対象期間に医師不在はありません。\``
+          "text": `<!channel>\n対象期間（${periodStr}）\n\n対象期間に医師不在はありません。`
         }
       }
     ];

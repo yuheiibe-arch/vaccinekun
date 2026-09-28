@@ -93,7 +93,9 @@ function triggerDailyAlertFromUI() {
     }
 
     // --- 1. Chatworkへの投稿 ---
-    const finalMessage = '[toall]\n' + messageBody;
+    // ★ 修正: 不在が1件以上ある場合のみ [toall] を付与する
+    const finalMessage = (targetRows.length > 0) ? '[toall]\n' + messageBody : messageBody;
+    
     const roomInfo = getRoomInfo_v2('【緊急】予約振替対策チーム[DS×CL×CS]');
     if (roomInfo.error) throw new Error(roomInfo.error);
     
@@ -124,58 +126,75 @@ function postAlertToSlack(targetCount, postDateStr, periodStr, locationListStr) 
 
   const sheetUrl = 'https://docs.google.com/spreadsheets/d/1BobYzsY2ApVTCP07qkJFOc6ZQkxq1bJgXl2endV5vHg/edit?gid=59569568#gid=59569568';
   
+  // スマホ通知などに表示されるプレビューテキスト (不在0件時はメンションなし)
   let previewText = targetCount > 0 
-    ? `@dspart @dsshift 🚨 ワクチン医師不在報告: ${targetCount}件の不在があります` 
-    : `✅ ワクチン医師不在報告: 医師の不在はありません`;
+    ? `<!channel> 🚨 ワクチン医師不在報告: ${targetCount}件の不在があります` 
+    : `✅ ワクチン医師不在報告: 対象期間に医師不在はありません。`;
 
-  // 共通のヘッダー部分 (時間部分を除外)
-  const dateOnlyStr = postDateStr.split(' ')[0];
-
-  const blocks = [
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": `@dspart @dsshift\n*${dateOnlyStr}*\n\n${periodStr}`
-      }
-    },
-    {
-      "type": "divider"
-    }
-  ];
+  let blocks = [];
 
   if (targetCount > 0) {
-    blocks.push({
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": locationListStr
-      }
-    });
-    blocks.push({
-      "type": "actions",
-      "elements": [
-        {
-          "type": "button",
-          "text": {
-            "type": "plain_text",
-            "text": "📊 不在状況詳細を開く",
-            "emoji": true
-          },
-          "url": sheetUrl,
-          "style": "primary"
+    // 不在拠点がある場合のレイアウト (<!channel> 付き)
+    blocks = [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "🚨 ワクチン医師不在報告",
+          "emoji": true
         }
-      ]
-    });
-  } else {
-    // 不在0件時は、赤文字インラインコードで「直近の医師不在はありません。」
-    blocks.push({
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "`直近の医師不在はありません。`"
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `<!channel>\nDaily checkが完了しました。\n対象期間（${periodStr}）において、*${targetCount}件* の医師不在拠点があります。`
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `*【不在拠点一覧】*\n${locationListStr}`
+        }
+      },
+      {
+        "type": "actions",
+        "elements": [
+          {
+            "type": "button",
+            "text": {
+              "type": "plain_text",
+              "text": "📊 不在状況詳細を開く (スプレッドシート)",
+              "emoji": true
+            },
+            "url": sheetUrl,
+            "style": "primary"
+          }
+        ]
+      },
+      {
+        "type": "divider"
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "💡 *【担当者へのお願い】*\nリンク先のスプレッドシートにて、5日以降の不在状況の詳細や最新状況をご確認ください。"
+        }
       }
-    });
+    ];
+  } else {
+    // 不在が0件の場合のシンプルなレイアウト (メンションなし)
+    blocks = [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": `対象期間（${postDateStr}）\n\n対象期間に医師不在はありません。`
+        }
+      }
+    ];
   }
 
   const payload = {
