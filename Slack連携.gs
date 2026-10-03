@@ -3,7 +3,11 @@
  * Slack通知用関数 (Block Kit対応・ワクチンくん版)
  * ==========================================
  */
-function postAlertToSlack(targetCount, periodStr, locationListStr) {
+
+/**
+ * 1. Dailyアラート用 Slack送信関数
+ */
+function postAlertToSlack(targetCount, postDateStr, periodStr, locationListStr) {
   // Webhook URLをスクリプトプロパティから取得
   const SLACK_WEBHOOK_URL = PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_URL');
   if (!SLACK_WEBHOOK_URL) {
@@ -15,8 +19,8 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
   
   // スマホ通知などに表示されるプレビューテキスト
   let previewText = targetCount > 0 
-    ? `<!channel> 🚨 ワクチンくん: ${periodStr} の期間に ${targetCount}件 の医師不在があります` 
-    : `<!channel> ✅ ワクチンくん: 対象期間に医師不在はありません。`;
+    ? `<!channel> 🚨 ワクチンくん: 対象期間に ${targetCount}件 の医師不在があります` 
+    : `✅ ワクチンくん: 対象期間に医師不在はありません。`;
 
   let blocks = [];
 
@@ -35,14 +39,15 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
         "type": "section",
         "text": {
           "type": "mrkdwn",
-          "text": `<!channel>\nDaily checkが完了しました。\n対象期間（${periodStr}）において、*${targetCount}件* の医師不在拠点があります。`
+          "text": `<!channel>\nDaily checkが完了しました。\n${postDateStr}\n対象期間（${periodStr}）において、*${targetCount}件* の医師不在拠点があります。`
         }
       },
       {
         "type": "section",
         "text": {
           "type": "mrkdwn",
-          "text": `*【不在拠点一覧】*\n${locationListStr}`
+          // ★ここでバッククォート3つ（```）を使ってコードブロック化しています
+          "text": `*【不在拠点一覧】*\n\`\`\`\n${locationListStr}\n\`\`\``
         }
       },
       {
@@ -86,7 +91,7 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
         "type": "section",
         "text": {
           "type": "mrkdwn",
-          "text": `<!channel>\n対象期間（${periodStr}）\n\n対象期間に医師不在はありません。`
+          "text": `<!channel>\n${postDateStr}\n対象期間（${periodStr}）\n\n対象期間に医師不在はありません。`
         }
       }
     ];
@@ -107,8 +112,59 @@ function postAlertToSlack(targetCount, periodStr, locationListStr) {
   // Slackへ送信
   try {
     UrlFetchApp.fetch(SLACK_WEBHOOK_URL, options);
-    Logger.log("✅ Slack通知の送信に成功しました。");
+    Logger.log("✅ Dailyアラート Slack通知の送信に成功しました。");
   } catch (e) {
     Logger.log("❌ Slack送信エラー: " + e.message);
+  }
+}
+
+
+/**
+ * 2. 手動アラート用 Slack送信関数（新規追加）
+ */
+function postManualAlertToSlack(messageContent) {
+  const SLACK_WEBHOOK_URL = PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_URL');
+  if (!SLACK_WEBHOOK_URL) return;
+
+  // Chatwork固有のタグ（[toall], [hr], [info]など）をSlack用に除去・置換
+  const cleanMessage = messageContent
+    .replace(/\[toall\]\n?/gi, '')
+    .replace(/\[hr\]/gi, '---')
+    .replace(/\[info\]|\[\/info\]/gi, '');
+
+  const payload = {
+    "channel": "C0C3KKZ92NL",
+    "text": "<!channel> 🚨 ワクチンくん 手動アラートが発動されました",
+    "blocks": [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "🚨 拠点アラート（手動発動）",
+          "emoji": true
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          // ★こちらもバッククォート3つ（```）でコードブロック化しています
+          "text": `<!channel>\n担当者より拠点アラートが共有されました。\n\n\`\`\`\n${cleanMessage}\n\`\`\``
+        }
+      }
+    ]
+  };
+
+  const options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload)
+  };
+
+  try {
+    UrlFetchApp.fetch(SLACK_WEBHOOK_URL, options);
+    Logger.log("✅ 手動アラート Slack通知の送信に成功しました。");
+  } catch (e) {
+    Logger.log("❌ 手動アラート Slack送信エラー: " + e.message);
   }
 }
