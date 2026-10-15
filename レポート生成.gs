@@ -4,6 +4,7 @@
  * =======================================================================================
  * v21 修正点:
  * - 通常レポートの「充足」の判定条件を「午前・午後・夜間の全てに医師がいる場合」に限定。
+ * - 【追加】部分的な隙間（absenceDetails）を別会場列へ出力するロジックを追加。
  */
 
 /**
@@ -39,7 +40,7 @@ function updateAllReports() {
 
     // --- STEP 2: 通常シフトのレポートを作成 ---
     Logger.log('2. 通常シフトの「予約リスト」を作成します...');
-    const regularShiftMap = getShiftMap(masterSheetName, '確定シフト', dataFetchNumDays, regexMap);
+    const regularShiftMap = getShiftMap(masterSheetName, '貼付用', dataFetchNumDays, regexMap);
     const normalReportData = createNormalReport(ss, regularReportSheetName, regularReportNumDays, today, regexMap, regularShiftMap, latestDataMap, reservationData, specialistShiftMap);
     Logger.log(' -> 「予約リスト」の作成完了');
 
@@ -101,7 +102,8 @@ function createNormalReport(ss, sheetName, numDays, today, regexMap, shiftMap, l
       } else {
         shiftMapKey = `${officialLocationName}_${targetDate.getTime()}`;
       }
-      const shiftInfo = shiftMap[shiftMapKey] || { morning: 0, afternoon: 0, night: 0 };
+      
+      const shiftInfo = shiftMap[shiftMapKey] || { morning: 0, afternoon: 0, night: 0, absenceDetails: "" };
       const fulfillmentRate = slotCount > 0 ? reservationCount / slotCount : 0;
       
       // ★★★ 修正点: 午前・午後・夜間の全てが1以上の場合のみ「充足」とする ★★★
@@ -123,11 +125,18 @@ function createNormalReport(ss, sheetName, numDays, today, regexMap, shiftMap, l
           }
         }
       }
+      
+      // 専任シフトのステータスと、データ加工.gs で計算された absenceDetails を結合
+      let detailColStr = specialistStatus;
+      if (shiftInfo.absenceDetails) {
+          detailColStr = detailColStr ? `${detailColStr} ${shiftInfo.absenceDetails}` : shiftInfo.absenceDetails;
+      }
+
       reportData.push([
         targetDate, judgment, reportLocationName, department,
         reservationCount, slotCount, fulfillmentRate,
         shiftInfo.morning, shiftInfo.afternoon, shiftInfo.night,
-        specialistStatus
+        detailColStr
       ]);
     }
   }
