@@ -3,7 +3,26 @@
  * この関数を時間主導型トリガー（例: 毎日午後5時〜6時）に設定してください。
  */
 function triggerDailyAlertFromUI() {
+  // ▼▼▼ 二重・多重実行防止ロック（ここから） ▼▼▼
+  const lock = LockService.getScriptLock();
+  // 同時に複数のトリガーが走った場合、2つ目以降はここで弾く（最大5秒待機）
+  if (!lock.tryLock(5000)) {
+    Logger.log('他のプロセスが実行中のためスキップしました。');
+    return { success: false, message: '現在他のプロセスが実行中です。重複送信を防ぐため処理を中断しました。' };
+  }
+
   try {
+    const props = PropertiesService.getScriptProperties();
+    const todayStr = Utilities.formatDate(new Date(), 'JST', 'yyyy-MM-dd');
+    const lastRunDate = props.getProperty('LAST_DAILY_ALERT_DATE');
+
+    // 今日すでに1回送信済みなら、2回目以降は絶対に送信しない
+    if (lastRunDate === todayStr) {
+      Logger.log(`本日（${todayStr}）は既にDailyアラートを送信済みのため、多重実行を防止しました。`);
+      return { success: false, message: `本日（${todayStr}）は既にDailyアラートを送信済みです。` };
+    }
+    // ▲▲▲ 二重・多重実行防止ロック（ここまで） ▲▲▲
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const unfulfilledSheet = ss.getSheetByName('医師未充足拠点');
     const templateSheet = ss.getSheetByName('テンプレ');
@@ -84,13 +103,16 @@ function triggerDailyAlertFromUI() {
       
       // 不在がある場合、Chatworkには詳細リンクを追記する
       const detailLinkText = '5日以降の不在状況詳細はこちらをご確認ください。\nhttps://docs.google.com/spreadsheets/d/1BobYzsY2ApVTCP07qkJFOc6ZQkxq1bJgXl2endV5vHg/edit?gid=59569568#gid=59569568';
-      messageBody = messageBody.replace(/(\[hr\])[\s\S]*(\[\/info\])/, `$1\n${locationListStr}\n\n${detailLinkText}\n$2`);
+      messageBody = messageBody.replace(/([hr])[\s\S]*(\[\/info\])/, `$1\n${locationListStr}\n\n${detailLinkText}\n$2`);
 
     } else {
       messageBody = noAlertTemplate;
       messageBody = messageBody.replace(/◯月◯日\s*（.）医師不在報告/, postDateStr);
       messageBody = messageBody.replace(/〇〇\/〇〇～〇〇\/〇〇/, periodStr);
     }
+
+    // ★ 送信直前に本日の実行記録を保存（エラー時はここに来ないため再実行可能）
+    props.setProperty('LAST_DAILY_ALERT_DATE', todayStr);
 
     // --- 1. Chatworkへの投稿 ---
     // ★ 修正: 不在が1件以上ある場合のみ [toall] を付与する
@@ -109,6 +131,9 @@ function triggerDailyAlertFromUI() {
   } catch(e) {
     Logger.log(`Dailyアラート生成・投稿エラー: ${e.message}\n${e.stack}`);
     throw new Error(`Dailyアラートの作成に失敗しました: ${e.message}`);
+  } finally {
+    // 処理が終わったら必ずロックを解放する
+    lock.releaseLock();
   }
 }
 
