@@ -220,11 +220,15 @@
     let message = editorData.template.template1;
     const location = selectedLocationData[0];
     const reason = document.querySelector('input[name="reason"]:checked')?.value || '（未選択）';
+    const absenceTimeStr = location.actualAbsenceTime
+      ? `${location.unfulfilledTime}（${location.actualAbsenceTime}）`
+      : location.unfulfilledTime;
+
     message = message.replace('対象拠点：【】', `対象拠点：${location.name}`);
     message = message.replace('時間00:00-00:00', `時間：${location.unfulfilledTime}`);
     message = message.replace('ワクチン予約数：◯件（投稿時現在）', `ワクチン予約数：${location.reservations}件（投稿時現在）`);
     message = message.replace(/充足率：\s*充足率：◯％（実数\/母数）/, `充足率：${location.rate}％（${location.reservations}/${location.total}）`);
-    message = message.replace('医師不在時間：00:00-00:00', `医師不在時間：${location.unfulfilledTime}`);
+    message = message.replace('医師不在時間：00:00-00:00', `医師不在時間：${absenceTimeStr}`);
     const alertCountLine = `発動：本年度${editorData.fiscalYearAlertCount}号`;
     const reasonLine = `原因：${reason}`;
     message = message.replace(/発動：本件◯件/, `${alertCountLine}\n${reasonLine}`);
@@ -261,11 +265,16 @@
 
   function postMessage(roomId) {
     const reason = document.querySelector('input[name="reason"]:checked')?.value || '';
+    // 編集されたメッセージ本文から「医師不在時間：」の記載を抽出してサーバーへ渡す
+    const absenceMatch = finalMessageContent.match(/医師不在時間[：:]\s*([^\r\n]+)/);
+    const editedAbsenceTime = absenceMatch ? absenceMatch[1].trim() : '';
+
     const historyData = {
       alertType: selectedAlertType,
       locations: selectedLocationData,
       reason: reason,
-      fiscalYearAlertCount: editorData.fiscalYearAlertCount
+      fiscalYearAlertCount: editorData.fiscalYearAlertCount,
+      editedAbsenceTime: editedAbsenceTime
     };
     google.script.run.withSuccessHandler(onPostSuccess).withFailureHandler(showError).postAlertToChatwork_v2(roomId, finalMessageContent, historyData);
   }

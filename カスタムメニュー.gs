@@ -130,8 +130,6 @@ function generateDailyAlertPreview() {
   }
 }
 
-// --- これ以降の関数は変更ありません ---
-
 function getUnfulfilledLocationsForUI_v2() { 
   try {
     const sheetName = '医師未充足拠点';
@@ -144,6 +142,7 @@ function getUnfulfilledLocationsForUI_v2() {
     const dateIdx = headers.indexOf('対象日'), nameIdx = headers.indexOf('拠点名'), reservationsIdx = headers.indexOf('ワクチン予約数');
     const totalIdx = headers.indexOf('ワクチン予約枠数'), rateIdx = headers.indexOf('充足率'), morningIdx = headers.indexOf('午前医師');
     const afternoonIdx = headers.indexOf('午後医師'), nightIdx = headers.indexOf('夜間医師');
+    const detailIdx = headers.indexOf('別会場');
     
     if ([dateIdx, nameIdx, morningIdx, afternoonIdx, nightIdx].includes(-1)) throw new Error('「医師未充足拠点」シートに必要なヘッダーが見つかりません。');
     
@@ -163,12 +162,18 @@ function getUnfulfilledLocationsForUI_v2() {
 
         if (unfulfilledSlots.length === 0) continue;
         const unfulfilledTime = unfulfilledSlots.join('・');
+
+        // 「別会場」列に「（15:00-18:00で医師不在あり）」があれば実際の不在時間を抽出
+        const rawDetail = detailIdx !== -1 ? String(row[detailIdx] || '') : '';
+        const detailMatch = rawDetail.match(/（([^）]+?)で医師不在あり）/);
+        const actualAbsenceTime = detailMatch ? detailMatch[1].trim() : '';
         
         locations.push({
           id: `loc${i}`, date: targetDate.toLocaleDateString('ja-JP'), name: row[nameIdx],
           reservations: row[reservationsIdx], total: row[totalIdx], rate: Math.round((row[rateIdx] || 0) * 100),
           actual: (Number(row[morningIdx]) || 0) + (Number(row[afternoonIdx]) || 0) + (Number(row[nightIdx]) || 0),
-          unfulfilledTime: unfulfilledTime
+          unfulfilledTime: unfulfilledTime,
+          actualAbsenceTime: actualAbsenceTime
         });
       }
     }
@@ -236,6 +241,8 @@ function postAlertToChatwork_v2(roomId, message, historyData) {
     
     if (historyData && historyData.alertType === 'transfer') {
       logAlertHistory(historyData);
+      // 振替依頼アラート発動時に、拠点連絡ルームへ対象拠点・拠点長メンション付きで連動投稿する
+      postTransferLinkageToClinicRoom_(token, historyData);
     }
     
     Logger.log(`投稿成功: ${response.getContentText()}`);
@@ -244,6 +251,113 @@ function postAlertToChatwork_v2(roomId, message, historyData) {
     Logger.log(`投稿失敗: ${e.message}`);
     return { success: false, message: `投稿に失敗しました: ${e.message}` };
   }
+}
+
+/**
+ * 振替依頼発動時に拠点連絡ルームへ対象拠点・拠点長メンション付きで投稿する関数
+ */
+function postTransferLinkageToClinicRoom_(token, historyData) {
+  try {
+    if (!historyData.locations || historyData.locations.length === 0) return;
+    const loc = historyData.locations[0];
+
+    // 拠点連絡ルームID（本番用: 449648673 / テスト用: 410981446）
+    const CLINIC_ROOM_ID = '449648673';
+
+    // 1. 拠点マスタから対象拠点の共用アカウント・拠点長IDメンションを取得
+    const mentionHeader = buildClinicMentionForTransfer_(loc.name);
+
+    // 2. 日付を「M/D」形式に整形（例: "2026/10/30" -> "10/30"）
+    const dateParts = String(loc.date || '').split('/');
+    const shortDate = dateParts.length >= 3
+      ? `${parseInt(dateParts[1], 10)}/${parseInt(dateParts[2], 10)}`
+      : loc.date;
+
+    // 3. 医師不在時間の決定
+    let absenceTimeDisplay = loc.unfulfilledTime;
+    if (historyData.editedAbsenceTime && historyData.editedAbsenceTime !== loc.unfulfilledTime) {
+      absenceTimeDisplay = historyData.editedAbsenceTime;
+    } else if (loc.actualAbsenceTime) {
+      absenceTimeDisplay = `${loc.unfulfilledTime}（${loc.actualAbsenceTime}）`;
+    }
+
+    // 4. 投稿メッセージの組み立て
+    const linkageMessage = `${mentionHeader}[info][title]振替依頼連携[/title]
+医師不在について充足見込めず、下記の拠点の振替対応CCS部に依頼いたしました。
+[hr]
+対象拠点：${shortDate} ${loc.name}
+時間：${loc.unfulfilledTime}
+ワクチン予約数：${loc.reservations}件（投稿時現在）
+充足率：${loc.rate}％（${loc.reservations}/${loc.total}）
+医師不在時間：${absenceTimeDisplay}
+[/info]`;
+
+    const endpoint = `https://api.chatwork.com/v2/rooms/${CLINIC_ROOM_ID}/messages`;
+    const options = {
+      method: 'post',
+      headers: { 'X-ChatWorkToken': token },
+      payload: { body: linkageMessage }
+    };
+
+    UrlFetchApp.fetch(endpoint, options);
+    Logger.log(`✅ 振替依頼連携を拠点ルーム(${CLINIC_ROOM_ID})へ投稿しました。`);
+  } catch (e) {
+    Logger.log(`❌ 振替依頼連携の投稿エラー: ${e.message}`);
+  }
+}
+
+/**
+ * 拠点マスタ（14RbsDcv0nXfEwweki8-9cK3lQUg1XUuhozLNF9u2qAs）の「拠点名」シートから
+ * 対象拠点の「共用アカウント」と「拠点長ID」を取得してメンション文字列を返すヘルパー関数
+ */
+function buildClinicMentionForTransfer_(rawClinicName) {
+  const MASTER_SS_ID = '14RbsDcv0nXfEwweki8-9cK3lQUg1XUuhozLNF9u2qAs';
+  const MASTER_SHEET_NAME = '拠点名';
+
+  const ss = SpreadsheetApp.openById(MASTER_SS_ID);
+  const sheet = ss.getSheetByName(MASTER_SHEET_NAME);
+  if (!sheet) throw new Error('拠点マスタの「拠点名」シートが見つかりません。');
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(h => String(h).replace(/\r?\n/g, '').trim());
+
+  const idxShared = headers.findIndex(h => h.includes('共用アカウント'));
+  const idxLeader = headers.findIndex(h => h.includes('拠点長ID'));
+  const nameColIndices = [];
+  headers.forEach((h, idx) => {
+    if (h === '正規記載' || h.includes('表記揺れ')) nameColIndices.push(idx);
+  });
+
+  const normalizeKey = (str) => {
+    return String(str || '')
+      .replace(/キャップスクリニック/g, '')
+      .replace(/[【】\[\]（）() \s]/g, '')
+      .replace(/小児科|内科/g, '')
+      .replace(/^\d+\./, '')
+      .replace(/D$/i, '')
+      .trim();
+  };
+
+  const targetClean = String(rawClinicName || '').trim();
+  const targetNorm = normalizeKey(targetClean);
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const isMatch = nameColIndices.some(cIdx => {
+      const val = String(row[cIdx] || '').trim();
+      return val && (val === targetClean || normalizeKey(val) === targetNorm);
+    });
+
+    if (isMatch) {
+      const lines = [];
+      const sharedTag = idxShared !== -1 ? String(row[idxShared] || '').trim() : '';
+      const leaderTag = idxLeader !== -1 ? String(row[idxLeader] || '').trim() : '';
+      if (sharedTag) lines.push(sharedTag);
+      if (leaderTag) lines.push(leaderTag);
+      return lines.length > 0 ? lines.join('\n') + '\n' : '';
+    }
+  }
+  return '';
 }
 
 function logAlertHistory(historyData) {
